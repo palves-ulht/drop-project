@@ -41,11 +41,14 @@ import org.springframework.test.context.TestPropertySource
 import org.springframework.test.context.junit4.SpringRunner
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.transaction.annotation.Transactional
 import java.sql.Timestamp
 import java.time.LocalDateTime
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @RunWith(SpringRunner::class)
 @AutoConfigureMockMvc
@@ -546,5 +549,73 @@ class TeacherAPIControllerTests: APIControllerTests {
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("authorization", testsHelper.header("teacher1", token)))
             .andExpect(status().isOk()).andExpect(content().string("false"))
+    }
+
+    @Test
+    @DirtiesContext
+    fun `try to mark the best submissions as final`() {
+        assigneeRepository.deleteAll()
+        assignmentRepository.deleteAll()
+        authorRepository.deleteAll()
+
+        setup()
+
+        val token = generateToken("teacher1", mutableListOf(SimpleGrantedAuthority("ROLE_TEACHER")), mvc)
+
+        this.mvc.perform(
+            get("/api/teacher/assignments/testJavaProj/previewMarkBestSubmissions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("authorization", testsHelper.header("teacher1", token)))
+            .andExpect(status().isOk()).andExpect(content().json("""
+                [
+                  {"id":2,
+                   "submissionDate":"2019-01-02T11:05:03.000+00:00",
+                   "status":"VALIDATED",
+                   "statusDate":"2019-01-02T11:05:03.000+00:00",
+                   "markedAsFinal":false,
+                   "teacherTests":{"numTests":4,
+                                   "numFailures":0,
+                                   "numErrors":0,
+                                   "numSkipped":0,
+                                   "ellapsed":0.007,
+                                   "numMandatoryOK":0,
+                                   "numMandatoryNOK":0 },
+                   "overdue":false,
+                   "group":{"id":1,
+                            "authors":[{"id":1,
+                                        "name":"Student 1"}]}}]
+            """.trimIndent()))
+
+        this.mvc.perform(
+            post("/api/teacher/markMultipleAsFinal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[1, 2]")
+                .header("authorization", testsHelper.header("teacher1", token)))
+            .andExpect(status().isOk)
+
+        val submissions = submissionRepository.findByStatusOrderByStatusDate(SubmissionStatus.VALIDATED.code)
+            .groupBy { it.id }
+        assertFalse { submissions[1]?.first()?.markedAsFinal == true } // first submission gets unmarked since 1 and 2 are made by the same student
+        assertTrue { submissions[2]?.first()?.markedAsFinal == true }
+    }
+
+    @Test
+    @DirtiesContext
+    fun `try to deactivate an assignment`() {
+        assigneeRepository.deleteAll()
+        assignmentRepository.deleteAll()
+        authorRepository.deleteAll()
+
+        setup()
+
+        val token = generateToken("teacher1", mutableListOf(SimpleGrantedAuthority("ROLE_TEACHER")), mvc)
+
+        this.mvc.perform(
+            get("/api/teacher/assignments/testJavaProj/toggleState")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("authorization", testsHelper.header("teacher1", token)))
+            .andExpect(status().isOk()).andExpect(content().string("true"))
+
+        assertFalse { assignmentRepository.getReferenceById("testJavaProj").active }
     }
 }
